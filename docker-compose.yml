@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  airshare:
+    build: .
+    container_name: airshare
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    networks:
+      - airshare-network
+
+networks:
+  airshare-network:
+    driver: bridge
