@@ -12,6 +12,7 @@ class AirShare {
         this.dataChannel = null;
         this.pendingFiles = [];
         this.isTransferring = false;
+        this.pendingIceCandidates = [];
         this.transferStats = {
             startTime: 0,
             totalBytes: 0,
@@ -305,6 +306,9 @@ class AirShare {
         console.log('Files to send:', this.pendingFiles.length);
 
         try {
+            // Clear any pending ICE candidates from previous connections
+            this.pendingIceCandidates = [];
+
             this.createPeerConnection();
 
             // Create data channel with iOS-compatible settings
@@ -379,9 +383,15 @@ class AirShare {
 
         this.peerConnection.oniceconnectionstatechange = () => {
             console.log('ICE connection state:', this.peerConnection.iceConnectionState);
-            if (this.peerConnection.iceConnectionState === 'failed') {
-                this.showToast('Connection failed - retrying');
-                this.peerConnection.restartIce();
+            const state = this.peerConnection.iceConnectionState;
+
+            if (state === 'connected' || state === 'completed') {
+                console.log('ICE connection established successfully');
+            } else if (state === 'failed') {
+                console.error('ICE connection failed');
+                this.showToast('Connection failed - please check network and try again');
+            } else if (state === 'disconnected') {
+                console.warn('ICE connection disconnected');
             }
         };
 
@@ -470,10 +480,15 @@ class AirShare {
             this.transferStats.totalBytes = 0; // Will be set from file metadata
             this.currentFileChunks = [];
             this.currentFile = null;
+            this.pendingIceCandidates = [];
 
             this.createPeerConnection();
             console.log('Setting remote description...');
             await this.peerConnection.setRemoteDescription(this.pendingOffer);
+            console.log('Remote description set');
+
+            // Add any buffered ICE candidates
+            await this.addPendingIceCandidates();
 
             console.log('Creating answer...');
             const answer = await this.peerConnection.createAnswer();
@@ -509,7 +524,12 @@ class AirShare {
         console.log('Received answer from:', message.from);
         try {
             await this.peerConnection.setRemoteDescription(message.data);
-            console.log('Remote description set, waiting for connection...');
+            console.log('Remote description set');
+
+            // Add any buffered ICE candidates
+            await this.addPendingIceCandidates();
+
+            console.log('Waiting for connection...');
             this.showTransferProgress('Sending files...', this.selectedDevice.name);
         } catch (error) {
             console.error('Error handling answer:', error);
@@ -520,15 +540,40 @@ class AirShare {
     async handleIceCandidate(message) {
         console.log('Received ICE candidate');
         try {
-            if (this.peerConnection) {
-                await this.peerConnection.addIceCandidate(message.data);
-                console.log('ICE candidate added successfully');
-            } else {
+            if (!this.peerConnection) {
                 console.warn('Received ICE candidate but no peer connection');
+                return;
             }
+
+            // If remote description isn't set yet, buffer the candidate
+            if (!this.peerConnection.remoteDescription || !this.peerConnection.remoteDescription.type) {
+                console.log('Remote description not set, buffering ICE candidate');
+                this.pendingIceCandidates.push(message.data);
+                return;
+            }
+
+            await this.peerConnection.addIceCandidate(message.data);
+            console.log('ICE candidate added successfully');
         } catch (error) {
             console.error('Error adding ICE candidate:', error);
         }
+    }
+
+    async addPendingIceCandidates() {
+        if (this.pendingIceCandidates.length === 0) {
+            return;
+        }
+
+        console.log(`Adding ${this.pendingIceCandidates.length} buffered ICE candidates`);
+        for (const candidate of this.pendingIceCandidates) {
+            try {
+                await this.peerConnection.addIceCandidate(candidate);
+                console.log('Buffered ICE candidate added');
+            } catch (error) {
+                console.error('Error adding buffered ICE candidate:', error);
+            }
+        }
+        this.pendingIceCandidates = [];
     }
 
     handleTransferAccept() {
@@ -798,6 +843,7 @@ class AirShare {
         }
 
         this.pendingFiles = [];
+        this.pendingIceCandidates = [];
         this.isTransferring = false;
         this.transferStats = { startTime: 0, totalBytes: 0, sentBytes: 0 };
 
