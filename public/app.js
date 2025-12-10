@@ -438,7 +438,15 @@ class AirShare {
     }
 
     async handleOffer(message) {
+        console.log('Received offer from:', message.from);
+        console.log('File count:', message.fileCount, 'Total size:', message.fileSize);
+
         this.selectedDevice = this.devices.find(d => d.id === message.from);
+
+        if (!this.selectedDevice) {
+            console.error('Device not found:', message.from);
+            return;
+        }
 
         // Show transfer request modal
         document.getElementById('modalDeviceName').textContent = this.selectedDevice.name;
@@ -455,6 +463,14 @@ class AirShare {
         document.getElementById('transferModal').style.display = 'none';
 
         try {
+            // Initialize receiving state
+            this.isTransferring = true;
+            this.transferStats.startTime = Date.now();
+            this.transferStats.sentBytes = 0;
+            this.transferStats.totalBytes = 0; // Will be set from file metadata
+            this.currentFileChunks = [];
+            this.currentFile = null;
+
             this.createPeerConnection();
             console.log('Setting remote description...');
             await this.peerConnection.setRemoteDescription(this.pendingOffer);
@@ -639,53 +655,111 @@ class AirShare {
     currentFileChunks = [];
 
     handleDataChannelMessage(data) {
-        if (typeof data === 'string') {
-            const message = JSON.parse(data);
+        try {
+            if (typeof data === 'string') {
+                const message = JSON.parse(data);
+                console.log('Received message:', message.type);
 
-            switch (message.type) {
-                case 'file-start':
-                    this.currentFile = {
-                        name: message.name,
-                        size: message.size,
-                        mimeType: message.mimeType,
-                        index: message.index,
-                        total: message.total
-                    };
-                    this.currentFileChunks = [];
-                    document.getElementById('transferFileName').textContent = `${message.name}`;
-                    break;
+                switch (message.type) {
+                    case 'file-start':
+                        console.log(`Starting to receive file: ${message.name} (${message.size} bytes)`);
+                        this.currentFile = {
+                            name: message.name,
+                            size: message.size,
+                            mimeType: message.mimeType,
+                            index: message.index,
+                            total: message.total
+                        };
+                        this.currentFileChunks = [];
 
-                case 'file-end':
-                    const blob = new Blob(this.currentFileChunks, { type: this.currentFile.mimeType });
-                    this.downloadFile(blob, this.currentFile.name);
-                    this.currentFile = null;
-                    this.currentFileChunks = [];
-                    break;
+                        // Set total bytes if first file
+                        if (this.transferStats.totalBytes === 0) {
+                            this.transferStats.totalBytes = message.size;
+                        }
 
-                case 'transfer-complete':
-                    this.showToast('Transfer complete!');
-                    setTimeout(() => {
-                        this.cleanupTransfer();
-                    }, 2000);
-                    break;
+                        document.getElementById('transferFileName').textContent = `${message.name}`;
+                        break;
+
+                    case 'file-end':
+                        console.log(`File complete: ${this.currentFile.name}, chunks received: ${this.currentFileChunks.length}`);
+
+                        try {
+                            const blob = new Blob(this.currentFileChunks, { type: this.currentFile.mimeType });
+                            console.log(`Created blob of size: ${blob.size}, expected: ${this.currentFile.size}`);
+
+                            this.downloadFile(blob, this.currentFile.name);
+                            this.currentFile = null;
+                            this.currentFileChunks = [];
+                        } catch (error) {
+                            console.error('Error creating/downloading blob:', error);
+                            this.showToast('Error saving file: ' + error.message);
+                        }
+                        break;
+
+                    case 'transfer-complete':
+                        console.log('Transfer complete!');
+                        this.showToast('Transfer complete!');
+                        setTimeout(() => {
+                            this.cleanupTransfer();
+                        }, 2000);
+                        break;
+                }
+            } else {
+                // Binary data chunk - ensure it's an ArrayBuffer
+                let arrayBuffer;
+
+                if (data instanceof ArrayBuffer) {
+                    arrayBuffer = data;
+                } else if (data instanceof Blob) {
+                    console.warn('Received Blob instead of ArrayBuffer, converting...');
+                    // This shouldn't happen but handle it
+                    return;
+                } else {
+                    console.error('Unexpected data type:', typeof data);
+                    return;
+                }
+
+                this.currentFileChunks.push(arrayBuffer);
+                this.transferStats.sentBytes += arrayBuffer.byteLength;
+
+                // Update progress every 10 chunks to avoid too many UI updates
+                if (this.currentFileChunks.length % 10 === 0) {
+                    this.updateTransferProgress();
+                }
             }
-        } else {
-            // Binary data chunk
-            this.currentFileChunks.push(data);
-            this.transferStats.sentBytes += data.byteLength;
-            this.updateTransferProgress();
+        } catch (error) {
+            console.error('Error handling data channel message:', error);
+            this.showToast('Transfer error: ' + error.message);
         }
     }
 
     downloadFile(blob, filename) {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        console.log(`Downloading file: ${filename}, size: ${blob.size}`);
+
+        try {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+
+            // Small delay for Windows browsers
+            setTimeout(() => {
+                a.click();
+                console.log('Download triggered for:', filename);
+
+                // Cleanup after a delay to ensure download starts
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    console.log('Cleanup complete for:', filename);
+                }, 100);
+            }, 10);
+        } catch (error) {
+            console.error('Error triggering download:', error);
+            this.showToast('Failed to download file: ' + error.message);
+        }
     }
 
     showTransferProgress(title, deviceName) {
