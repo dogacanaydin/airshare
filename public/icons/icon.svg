@@ -1,0 +1,32 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background Circle -->
+  <circle cx="256" cy="256" r="240" fill="#4c6ef5"/>
+
+  <!-- Share Symbol - Two Arrows -->
+  <g transform="translate(256, 256)">
+    <!-- Upload Arrow -->
+    <path d="M 0,-80 L 0,20 M 0,-80 L -40,-40 M 0,-80 L 40,-40"
+          stroke="white"
+          stroke-width="24"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          fill="none"/>
+
+    <!-- Download Arrow -->
+    <path d="M 0,40 L 0,140 M 0,140 L -40,100 M 0,140 L 40,100"
+          stroke="white"
+          stroke-width="24"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          fill="none"/>
+
+    <!-- Center Circle -->
+    <circle cx="0" cy="0" r="20" fill="white"/>
+  </g>
+
+  <!-- Decorative Dots -->
+  <circle cx="120" cy="120" r="12" fill="white" opacity="0.3"/>
+  <circle cx="392" cy="120" r="12" fill="white" opacity="0.3"/>
+  <circle cx="120" cy="392" r="12" fill="white" opacity="0.3"/>
+  <circle cx="392" cy="392" r="12" fill="white" opacity="0.3"/>
+</svg>
