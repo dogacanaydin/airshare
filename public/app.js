@@ -301,19 +301,26 @@ class AirShare {
     }
 
     async initiateTransfer() {
+        console.log('Initiating transfer to:', this.selectedDevice.name);
+        console.log('Files to send:', this.pendingFiles.length);
+
         try {
             this.createPeerConnection();
 
-            // Create data channel
+            // Create data channel with iOS-compatible settings
             this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', {
-                ordered: true
+                ordered: true,
+                maxRetransmits: 10
             });
 
+            console.log('Data channel created, setting up handlers...');
             this.setupDataChannel();
 
             // Create and send offer
+            console.log('Creating offer...');
             const offer = await this.peerConnection.createOffer();
             await this.peerConnection.setLocalDescription(offer);
+            console.log('Local description set, sending offer...');
 
             const fileInfo = this.getFilesInfo();
 
@@ -327,10 +334,11 @@ class AirShare {
                 fileCount: this.pendingFiles.length
             });
 
+            console.log('Offer sent to', this.selectedDevice.name);
             this.showToast('Sending transfer request...');
         } catch (error) {
             console.error('Error initiating transfer:', error);
-            this.showToast('Failed to initiate transfer');
+            this.showToast('Failed to initiate transfer: ' + error.message);
         }
     }
 
@@ -354,15 +362,31 @@ class AirShare {
 
         this.peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
+                console.log('Sending ICE candidate');
                 this.send({
                     type: 'ice-candidate',
                     target: this.selectedDevice.id,
                     data: event.candidate
                 });
+            } else {
+                console.log('ICE gathering complete');
+            }
+        };
+
+        this.peerConnection.onicegatheringstatechange = () => {
+            console.log('ICE gathering state:', this.peerConnection.iceGatheringState);
+        };
+
+        this.peerConnection.oniceconnectionstatechange = () => {
+            console.log('ICE connection state:', this.peerConnection.iceConnectionState);
+            if (this.peerConnection.iceConnectionState === 'failed') {
+                this.showToast('Connection failed - retrying');
+                this.peerConnection.restartIce();
             }
         };
 
         this.peerConnection.ondatachannel = (event) => {
+            console.log('Data channel received');
             this.dataChannel = event.channel;
             this.setupDataChannel();
         };
@@ -372,14 +396,20 @@ class AirShare {
             if (this.peerConnection.connectionState === 'failed') {
                 this.showToast('Connection failed');
                 this.cleanupTransfer();
+            } else if (this.peerConnection.connectionState === 'connected') {
+                console.log('Peer connection established');
             }
         };
     }
 
     setupDataChannel() {
+        console.log('Setting up data channel, current state:', this.dataChannel.readyState);
+
         this.dataChannel.onopen = () => {
-            console.log('Data channel opened');
+            console.log('Data channel opened successfully');
+            console.log('Ready to transfer, pending files:', this.pendingFiles.length);
             if (this.pendingFiles.length > 0) {
+                console.log('Starting file transfer...');
                 this.sendFiles();
             }
         };
@@ -397,6 +427,14 @@ class AirShare {
             this.showToast('Transfer error');
             this.cleanupTransfer();
         };
+
+        // If already open, trigger immediately
+        if (this.dataChannel.readyState === 'open') {
+            console.log('Data channel already open');
+            if (this.pendingFiles.length > 0) {
+                this.sendFiles();
+            }
+        }
     }
 
     async handleOffer(message) {
@@ -413,14 +451,18 @@ class AirShare {
     }
 
     async acceptTransfer() {
+        console.log('Accepting transfer from:', this.selectedDevice.name);
         document.getElementById('transferModal').style.display = 'none';
 
         try {
             this.createPeerConnection();
+            console.log('Setting remote description...');
             await this.peerConnection.setRemoteDescription(this.pendingOffer);
 
+            console.log('Creating answer...');
             const answer = await this.peerConnection.createAnswer();
             await this.peerConnection.setLocalDescription(answer);
+            console.log('Local description set');
 
             this.send({
                 type: 'answer',
@@ -428,10 +470,11 @@ class AirShare {
                 data: answer
             });
 
+            console.log('Answer sent, waiting for connection...');
             this.showTransferProgress('Receiving files...', this.selectedDevice.name);
         } catch (error) {
             console.error('Error accepting transfer:', error);
-            this.showToast('Failed to accept transfer');
+            this.showToast('Failed to accept transfer: ' + error.message);
         }
     }
 
@@ -447,17 +490,26 @@ class AirShare {
     }
 
     async handleAnswer(message) {
+        console.log('Received answer from:', message.from);
         try {
             await this.peerConnection.setRemoteDescription(message.data);
+            console.log('Remote description set, waiting for connection...');
             this.showTransferProgress('Sending files...', this.selectedDevice.name);
         } catch (error) {
             console.error('Error handling answer:', error);
+            this.showToast('Connection error: ' + error.message);
         }
     }
 
     async handleIceCandidate(message) {
+        console.log('Received ICE candidate');
         try {
-            await this.peerConnection.addIceCandidate(message.data);
+            if (this.peerConnection) {
+                await this.peerConnection.addIceCandidate(message.data);
+                console.log('ICE candidate added successfully');
+            } else {
+                console.warn('Received ICE candidate but no peer connection');
+            }
         } catch (error) {
             console.error('Error adding ICE candidate:', error);
         }
@@ -477,66 +529,103 @@ class AirShare {
     }
 
     async sendFiles() {
+        console.log('sendFiles() called, files:', this.pendingFiles.length);
+
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            console.error('Data channel not ready:', this.dataChannel?.readyState);
+            this.showToast('Connection not ready, please try again');
+            return;
+        }
+
         this.isTransferring = true;
         this.transferStats.startTime = Date.now();
         this.transferStats.sentBytes = 0;
         this.transferStats.totalBytes = this.pendingFiles.reduce((sum, f) => sum + f.size, 0);
 
-        const CHUNK_SIZE = 16384; // 16KB chunks
+        // Smaller chunk size for better iOS compatibility (8KB instead of 16KB)
+        const CHUNK_SIZE = 8192;
+        // Lower buffer threshold for iOS Safari (max 256KB buffered)
+        const MAX_BUFFER = CHUNK_SIZE * 32;
 
-        for (let i = 0; i < this.pendingFiles.length; i++) {
-            const file = this.pendingFiles[i];
+        try {
+            for (let i = 0; i < this.pendingFiles.length; i++) {
+                const file = this.pendingFiles[i];
+                console.log(`Sending file ${i + 1}/${this.pendingFiles.length}: ${file.name} (${file.size} bytes)`);
 
-            // Send file metadata
-            const metadata = {
-                type: 'file-start',
-                name: file.name,
-                size: file.size,
-                mimeType: file.type,
-                index: i,
-                total: this.pendingFiles.length
-            };
+                // Send file metadata
+                const metadata = {
+                    type: 'file-start',
+                    name: file.name,
+                    size: file.size,
+                    mimeType: file.type || 'application/octet-stream',
+                    index: i,
+                    total: this.pendingFiles.length
+                };
 
-            this.dataChannel.send(JSON.stringify(metadata));
+                this.dataChannel.send(JSON.stringify(metadata));
 
-            // Send file in chunks
-            const reader = new FileReader();
-            let offset = 0;
+                // Send file in chunks
+                let offset = 0;
+                let chunkCount = 0;
 
-            while (offset < file.size) {
-                const chunk = file.slice(offset, offset + CHUNK_SIZE);
-                const arrayBuffer = await this.readChunk(chunk);
+                while (offset < file.size) {
+                    const chunk = file.slice(offset, offset + CHUNK_SIZE);
 
-                // Wait if buffer is full
-                while (this.dataChannel.bufferedAmount > CHUNK_SIZE * 10) {
-                    await this.sleep(10);
+                    try {
+                        const arrayBuffer = await this.readChunk(chunk);
+
+                        // Wait if buffer is getting full - iOS needs more conservative throttling
+                        while (this.dataChannel.bufferedAmount > MAX_BUFFER) {
+                            await this.sleep(50);
+                        }
+
+                        this.dataChannel.send(arrayBuffer);
+                        offset += arrayBuffer.byteLength;
+                        this.transferStats.sentBytes += arrayBuffer.byteLength;
+                        chunkCount++;
+
+                        // Update progress every 10 chunks to avoid too many UI updates
+                        if (chunkCount % 10 === 0) {
+                            this.updateTransferProgress();
+                        }
+                    } catch (error) {
+                        console.error('Error reading/sending chunk:', error);
+                        throw error;
+                    }
                 }
 
-                this.dataChannel.send(arrayBuffer);
-                offset += arrayBuffer.byteLength;
-                this.transferStats.sentBytes += arrayBuffer.byteLength;
+                console.log(`File ${file.name} sent successfully (${chunkCount} chunks)`);
 
+                // Send file end marker
+                this.dataChannel.send(JSON.stringify({ type: 'file-end' }));
+
+                // Final progress update for this file
                 this.updateTransferProgress();
             }
 
-            // Send file end marker
-            this.dataChannel.send(JSON.stringify({ type: 'file-end' }));
-        }
+            // All files sent
+            this.dataChannel.send(JSON.stringify({ type: 'transfer-complete' }));
+            console.log('All files sent successfully');
+            this.showToast('Transfer complete!');
 
-        // All files sent
-        this.dataChannel.send(JSON.stringify({ type: 'transfer-complete' }));
-        this.showToast('Transfer complete!');
-
-        setTimeout(() => {
+            setTimeout(() => {
+                this.cleanupTransfer();
+            }, 2000);
+        } catch (error) {
+            console.error('Error during file transfer:', error);
+            this.showToast('Transfer failed: ' + error.message);
             this.cleanupTransfer();
-        }, 2000);
+        }
     }
 
     readChunk(blob) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = () => resolve(reader.result);
-            reader.onerror = reject;
+            reader.onerror = (error) => {
+                console.error('FileReader error:', error);
+                reject(new Error('Failed to read file chunk'));
+            };
             reader.readAsArrayBuffer(blob);
         });
     }
