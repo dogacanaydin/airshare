@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>AirShare - Share files like AirDrop</title>
+
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
+
+    <!-- Icons -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+    <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png">
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                    <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="2"/>
+                    <path d="M16 8v8m0 0l4-4m-4 4l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M16 16v8m0 0l4-4m-4 4l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <h1>AirShare</h1>
+            </div>
+            <div class="device-name-container">
+                <input type="text" id="deviceName" placeholder="My Device" maxlength="30">
+                <button id="editDeviceName" class="icon-btn" title="Edit device name">
+                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                        <path d="M14.166 2.5a2.357 2.357 0 0 1 3.334 3.334l-9.167 9.166-4.166.834.833-4.167 9.166-9.167z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Connection Status -->
+        <div class="status" id="status">
+            <div class="status-indicator"></div>
+            <span id="statusText">Connecting...</span>
+        </div>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- No Devices State -->
+            <div id="noDevices" class="empty-state">
+                <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                    <circle cx="32" cy="32" r="28" stroke="currentColor" stroke-width="2" opacity="0.3"/>
+                    <path d="M32 16v16m0 0l8-8m-8 8l-8-8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <h2>No devices found</h2>
+                <p>Open AirShare on another device to get started</p>
+            </div>
+
+            <!-- Devices List -->
+            <div id="devicesList" class="devices-list" style="display: none;">
+                <h2>Available Devices</h2>
+                <div id="devicesContainer" class="devices-container"></div>
+            </div>
+
+            <!-- File Drop Area -->
+            <div id="dropArea" class="drop-area" style="display: none;">
+                <input type="file" id="fileInput" multiple style="display: none;">
+                <div class="drop-content">
+                    <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
+                        <path d="M32 8v32m0-32l8 8m-8-8l-8 8" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M12 40v8a4 4 0 0 0 4 4h32a4 4 0 0 0 4-4v-8" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <h3>Drop files here</h3>
+                    <p>or <button id="selectFiles" class="link-btn">browse</button></p>
+                </div>
+            </div>
+
+            <!-- Transfer Progress -->
+            <div id="transferProgress" class="transfer-progress" style="display: none;">
+                <div class="transfer-info">
+                    <div class="transfer-icon">📤</div>
+                    <div class="transfer-details">
+                        <h3 id="transferTitle">Sending files...</h3>
+                        <p id="transferDevice"></p>
+                        <p id="transferFileName"></p>
+                    </div>
+                </div>
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <p class="progress-text"><span id="progressPercent">0</span>% • <span id="progressSpeed">0 MB/s</span></p>
+                <button id="cancelTransfer" class="btn-secondary">Cancel</button>
+            </div>
+        </main>
+
+        <!-- Transfer Request Modal -->
+        <div id="transferModal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-icon">📥</div>
+                <h2>Incoming Transfer</h2>
+                <p><strong id="modalDeviceName"></strong> wants to send you:</p>
+                <div class="file-preview">
+                    <p id="modalFileInfo"></p>
+                </div>
+                <div class="modal-actions">
+                    <button id="acceptTransfer" class="btn-primary">Accept</button>
+                    <button id="rejectTransfer" class="btn-secondary">Decline</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notification Toast -->
+        <div id="toast" class="toast"></div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/app.js"></script>
+</body>
+</html>
