@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   airshare:
-    build: .
+    image: ghcr.io/dogacanaydin/airshare:latest
     container_name: airshare
     restart: unless-stopped
     ports:
@@ -16,3 +16,4 @@ services:
 networks:
   airshare-network:
     driver: bridge
+
