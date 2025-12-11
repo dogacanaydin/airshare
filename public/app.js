@@ -311,10 +311,11 @@ class AirShare {
 
             this.createPeerConnection();
 
-            // Create data channel with iOS-compatible settings
+            // Create data channel with cross-platform compatible settings
             this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', {
                 ordered: true,
-                maxRetransmits: 10
+                maxRetransmits: 30, // Increased for Windows reliability
+                maxPacketLifeTime: null // Ensure retransmits are used instead of time limit
             });
 
             console.log('Data channel created, setting up handlers...');
@@ -415,8 +416,12 @@ class AirShare {
     setupDataChannel() {
         console.log('Setting up data channel, current state:', this.dataChannel.readyState);
 
+        // Set binary type to arraybuffer for consistent handling across browsers
+        this.dataChannel.binaryType = 'arraybuffer';
+
         this.dataChannel.onopen = () => {
             console.log('Data channel opened successfully');
+            console.log('Binary type:', this.dataChannel.binaryType);
             console.log('Ready to transfer, pending files:', this.pendingFiles.length);
             if (this.pendingFiles.length > 0) {
                 console.log('Starting file transfer...');
@@ -635,7 +640,7 @@ class AirShare {
                     try {
                         const arrayBuffer = await this.readChunk(chunk);
 
-                        // Wait if buffer is getting full - iOS needs more conservative throttling
+                        // Wait if buffer is getting full - more conservative throttling for all platforms
                         while (this.dataChannel.bufferedAmount > MAX_BUFFER) {
                             await this.sleep(50);
                         }
@@ -648,6 +653,11 @@ class AirShare {
                         // Update progress every 10 chunks to avoid too many UI updates
                         if (chunkCount % 10 === 0) {
                             this.updateTransferProgress();
+                        }
+
+                        // Small delay every 100 chunks to help Windows receivers process data
+                        if (chunkCount % 100 === 0) {
+                            await this.sleep(10);
                         }
                     } catch (error) {
                         console.error('Error reading/sending chunk:', error);
@@ -729,15 +739,39 @@ class AirShare {
                         console.log(`File complete: ${this.currentFile.name}, chunks received: ${this.currentFileChunks.length}`);
 
                         try {
+                            // Create blob from chunks
                             const blob = new Blob(this.currentFileChunks, { type: this.currentFile.mimeType });
                             console.log(`Created blob of size: ${blob.size}, expected: ${this.currentFile.size}`);
 
-                            this.downloadFile(blob, this.currentFile.name);
-                            this.currentFile = null;
+                            // Verify blob size matches expected size
+                            if (blob.size !== this.currentFile.size) {
+                                console.warn(`Blob size mismatch! Expected: ${this.currentFile.size}, got: ${blob.size}`);
+                                // Continue anyway as some bytes might be padding
+                            }
+
+                            // Clear chunks from memory before download to reduce memory pressure
+                            const fileName = this.currentFile.name;
                             this.currentFileChunks = [];
+                            this.currentFile = null;
+
+                            // Trigger download
+                            this.downloadFile(blob, fileName);
+
+                            // Request garbage collection hint (non-standard but helps on some browsers)
+                            if (window.gc) {
+                                try {
+                                    window.gc();
+                                } catch (e) {
+                                    // Ignore - gc() is not always available
+                                }
+                            }
                         } catch (error) {
                             console.error('Error creating/downloading blob:', error);
                             this.showToast('Error saving file: ' + error.message);
+
+                            // Clean up on error
+                            this.currentFileChunks = [];
+                            this.currentFile = null;
                         }
                         break;
 
@@ -751,25 +785,35 @@ class AirShare {
                 }
             } else {
                 // Binary data chunk - ensure it's an ArrayBuffer
-                let arrayBuffer;
-
                 if (data instanceof ArrayBuffer) {
-                    arrayBuffer = data;
+                    this.currentFileChunks.push(data);
+                    this.transferStats.sentBytes += data.byteLength;
+
+                    // Update progress every 10 chunks to avoid too many UI updates
+                    if (this.currentFileChunks.length % 10 === 0) {
+                        this.updateTransferProgress();
+                    }
                 } else if (data instanceof Blob) {
+                    // Some Windows browsers might send Blob instead of ArrayBuffer
                     console.warn('Received Blob instead of ArrayBuffer, converting...');
-                    // This shouldn't happen but handle it
-                    return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        this.currentFileChunks.push(reader.result);
+                        this.transferStats.sentBytes += reader.result.byteLength;
+
+                        // Update progress
+                        if (this.currentFileChunks.length % 10 === 0) {
+                            this.updateTransferProgress();
+                        }
+                    };
+                    reader.onerror = (error) => {
+                        console.error('Error converting Blob to ArrayBuffer:', error);
+                        this.showToast('Error processing data chunk');
+                    };
+                    reader.readAsArrayBuffer(data);
                 } else {
                     console.error('Unexpected data type:', typeof data);
                     return;
-                }
-
-                this.currentFileChunks.push(arrayBuffer);
-                this.transferStats.sentBytes += arrayBuffer.byteLength;
-
-                // Update progress every 10 chunks to avoid too many UI updates
-                if (this.currentFileChunks.length % 10 === 0) {
-                    this.updateTransferProgress();
                 }
             }
         } catch (error) {
@@ -778,9 +822,52 @@ class AirShare {
         }
     }
 
-    downloadFile(blob, filename) {
-        console.log(`Downloading file: ${filename}, size: ${blob.size}`);
+    sanitizeFilename(filename) {
+        // Windows doesn't allow these characters: < > : " / \ | ? *
+        // Also trim spaces and periods from the end
+        return filename
+            .replace(/[<>:"\/\\|?*]/g, '_')
+            .replace(/\s+$/g, '')
+            .replace(/\.+$/g, '')
+            .slice(0, 255); // Windows max filename length
+    }
 
+    downloadFile(blob, filename) {
+        // Sanitize filename for Windows compatibility
+        const sanitizedFilename = this.sanitizeFilename(filename);
+        console.log(`Downloading file: ${sanitizedFilename} (original: ${filename}), size: ${blob.size}`);
+
+        // Try modern approach first
+        if (window.showSaveFilePicker) {
+            this.downloadFileModern(blob, sanitizedFilename);
+        } else {
+            this.downloadFileLegacy(blob, sanitizedFilename);
+        }
+    }
+
+    async downloadFileModern(blob, filename) {
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName: filename,
+                types: [{
+                    description: 'File',
+                    accept: { '*/*': ['.bin'] }
+                }]
+            });
+
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            console.log('File saved successfully using modern API');
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                console.warn('Modern download failed, falling back to legacy method:', error);
+                this.downloadFileLegacy(blob, filename);
+            }
+        }
+    }
+
+    downloadFileLegacy(blob, filename) {
         try {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -789,18 +876,32 @@ class AirShare {
             a.style.display = 'none';
             document.body.appendChild(a);
 
-            // Small delay for Windows browsers
+            // Longer delay for Windows browsers to ensure blob is ready
             setTimeout(() => {
-                a.click();
-                console.log('Download triggered for:', filename);
+                try {
+                    a.click();
+                    console.log('Download triggered for:', filename);
+                } catch (clickError) {
+                    console.error('Click failed, trying dispatchEvent:', clickError);
+                    // Fallback: use dispatchEvent
+                    a.dispatchEvent(new MouseEvent('click', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true
+                    }));
+                }
 
-                // Cleanup after a delay to ensure download starts
+                // Longer cleanup delay for Windows to ensure download starts
                 setTimeout(() => {
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                    console.log('Cleanup complete for:', filename);
-                }, 100);
-            }, 10);
+                    try {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        console.log('Cleanup complete for:', filename);
+                    } catch (cleanupError) {
+                        console.error('Error during cleanup:', cleanupError);
+                    }
+                }, 250); // Increased from 100ms
+            }, 50); // Increased from 10ms
         } catch (error) {
             console.error('Error triggering download:', error);
             this.showToast('Failed to download file: ' + error.message);
