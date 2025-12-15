@@ -104,7 +104,8 @@ Server runs on `http://localhost:3000`
 - Hard refresh (Ctrl+Shift+R) to bypass service worker cache
 
 **Service Worker Changes (public/sw.js)**
-- Update version number to force updates
+- ⚠️ **CRITICAL**: Update VERSION constant whenever app.js changes
+- The VERSION in sw.js MUST match the version in app.js comments
 - Modify caching strategy
 - Users need to close all tabs and reopen
 
@@ -186,10 +187,26 @@ docker run -d -p 3000:3000 airshare
 - Ensure WebSocket upgrade headers are passed through proxy
 
 ### Service Worker Cache Issues
+
+**⚠️ IMPORTANT: Version Update Checklist**
+
+When updating the app, ALWAYS follow these steps:
+1. Update version comment in `public/app.js` (Line 3)
+2. Update VERSION constant in `public/sw.js` (Line 3)
+3. Ensure both versions match (e.g., both say 1.0.4)
+4. Commit both files together
+
+**Why this matters:**
+- The service worker uses VERSION to create cache names (e.g., `airshare-v1.0.4`)
+- Mismatched versions cause old cached versions to be served
+- Users will see outdated/broken versions without a hard refresh
+
+**Troubleshooting:**
 - Update version in sw.js
 - Hard refresh (Ctrl+Shift+R)
 - Clear site data in DevTools
 - Close all tabs and reopen
+- Check console for `[SW] Installing version X.X.X` logs
 
 ### PWA Not Installing
 - Requires HTTPS (except localhost)

@@ -1,6 +1,7 @@
 {
   "name": "airshare",
   "version": "1.0.0",
+  "_versionReminder": "⚠️ When updating app version: 1) Update version comment in public/app.js (Line 3), 2) Update VERSION in public/sw.js (Line 3), 3) Ensure both match to avoid PWA cache issues",
   "description": "WebRTC-based file sharing like AirDrop",
   "main": "server.js",
   "scripts": {
