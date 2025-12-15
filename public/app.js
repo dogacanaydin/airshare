@@ -314,8 +314,7 @@ class AirShare {
             // Create data channel with cross-platform compatible settings
             this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', {
                 ordered: true,
-                maxRetransmits: 30, // Increased for Windows reliability
-                maxPacketLifeTime: null // Ensure retransmits are used instead of time limit
+                maxRetransmits: 30 // Increased for Windows and cross-platform reliability
             });
 
             console.log('Data channel created, setting up handlers...');
