@@ -553,7 +553,8 @@ class AirShare {
         console.log('Received ICE candidate');
         try {
             if (!this.peerConnection) {
-                console.warn('Received ICE candidate but no peer connection');
+                console.warn('Received ICE candidate but no peer connection yet, buffering');
+                this.pendingIceCandidates.push(message.data);
                 return;
             }
 
