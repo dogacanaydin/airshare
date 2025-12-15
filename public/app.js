@@ -1,6 +1,6 @@
 // AirShare - WebRTC File Transfer Application
 // Auto-select single device feature
-// Version: 1.0.3 - Windows file sending fixes
+// Version: 1.0.4 - Fixed ICE candidate buffering
 
 class AirShare {
     constructor() {
@@ -20,7 +20,7 @@ class AirShare {
             sentBytes: 0
         };
 
-        console.log('AirShare v1.0.3 loaded');
+        console.log('AirShare v1.0.4 loaded');
         this.init();
     }
 
@@ -494,14 +494,15 @@ class AirShare {
             this.transferStats.totalBytes = 0; // Will be set from file metadata
             this.currentFileChunks = [];
             this.currentFile = null;
-            this.pendingIceCandidates = [];
+            // Don't clear pendingIceCandidates - they've been buffered while waiting for user to accept
 
             this.createPeerConnection();
             console.log('Setting remote description...');
             await this.peerConnection.setRemoteDescription(this.pendingOffer);
             console.log('Remote description set');
 
-            // Add any buffered ICE candidates
+            // Add any buffered ICE candidates (that arrived before user accepted)
+            console.log('Adding buffered ICE candidates, count:', this.pendingIceCandidates.length);
             await this.addPendingIceCandidates();
 
             console.log('Creating answer...');
