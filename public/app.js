@@ -1,5 +1,6 @@
 // AirShare - WebRTC File Transfer Application
 // Auto-select single device feature
+// Version: 1.0.4 - Fixed ICE candidate buffering
 
 class AirShare {
     constructor() {
@@ -19,6 +20,7 @@ class AirShare {
             sentBytes: 0
         };
 
+        console.log('AirShare v1.0.4 loaded');
         this.init();
     }
 
@@ -304,29 +306,35 @@ class AirShare {
     async initiateTransfer() {
         console.log('Initiating transfer to:', this.selectedDevice.name);
         console.log('Files to send:', this.pendingFiles.length);
+        console.log('Platform:', this.detectPlatform());
 
         try {
             // Clear any pending ICE candidates from previous connections
             this.pendingIceCandidates = [];
 
+            console.log('Creating peer connection...');
             this.createPeerConnection();
 
-            // Create data channel with iOS-compatible settings
+            // Create data channel with cross-platform compatible settings
+            console.log('Creating data channel...');
             this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', {
                 ordered: true,
-                maxRetransmits: 10
+                maxRetransmits: 30 // Increased for Windows and cross-platform reliability
             });
 
-            console.log('Data channel created, setting up handlers...');
+            console.log('Data channel created successfully, state:', this.dataChannel.readyState);
+            console.log('Setting up data channel handlers...');
             this.setupDataChannel();
 
             // Create and send offer
-            console.log('Creating offer...');
+            console.log('Creating WebRTC offer...');
             const offer = await this.peerConnection.createOffer();
+            console.log('Offer created, setting local description...');
             await this.peerConnection.setLocalDescription(offer);
-            console.log('Local description set, sending offer...');
+            console.log('Local description set, preparing file info...');
 
             const fileInfo = this.getFilesInfo();
+            console.log('File info:', fileInfo);
 
             this.send({
                 type: 'offer',
@@ -342,7 +350,9 @@ class AirShare {
             this.showToast('Sending transfer request...');
         } catch (error) {
             console.error('Error initiating transfer:', error);
+            console.error('Error stack:', error.stack);
             this.showToast('Failed to initiate transfer: ' + error.message);
+            this.cleanupTransfer();
         }
     }
 
@@ -415,8 +425,12 @@ class AirShare {
     setupDataChannel() {
         console.log('Setting up data channel, current state:', this.dataChannel.readyState);
 
+        // Set binary type to arraybuffer for consistent handling across browsers
+        this.dataChannel.binaryType = 'arraybuffer';
+
         this.dataChannel.onopen = () => {
             console.log('Data channel opened successfully');
+            console.log('Binary type:', this.dataChannel.binaryType);
             console.log('Ready to transfer, pending files:', this.pendingFiles.length);
             if (this.pendingFiles.length > 0) {
                 console.log('Starting file transfer...');
@@ -480,14 +494,15 @@ class AirShare {
             this.transferStats.totalBytes = 0; // Will be set from file metadata
             this.currentFileChunks = [];
             this.currentFile = null;
-            this.pendingIceCandidates = [];
+            // Don't clear pendingIceCandidates - they've been buffered while waiting for user to accept
 
             this.createPeerConnection();
             console.log('Setting remote description...');
             await this.peerConnection.setRemoteDescription(this.pendingOffer);
             console.log('Remote description set');
 
-            // Add any buffered ICE candidates
+            // Add any buffered ICE candidates (that arrived before user accepted)
+            console.log('Adding buffered ICE candidates, count:', this.pendingIceCandidates.length);
             await this.addPendingIceCandidates();
 
             console.log('Creating answer...');
@@ -541,7 +556,8 @@ class AirShare {
         console.log('Received ICE candidate');
         try {
             if (!this.peerConnection) {
-                console.warn('Received ICE candidate but no peer connection');
+                console.warn('Received ICE candidate but no peer connection yet, buffering');
+                this.pendingIceCandidates.push(message.data);
                 return;
             }
 
@@ -635,7 +651,7 @@ class AirShare {
                     try {
                         const arrayBuffer = await this.readChunk(chunk);
 
-                        // Wait if buffer is getting full - iOS needs more conservative throttling
+                        // Wait if buffer is getting full - more conservative throttling for all platforms
                         while (this.dataChannel.bufferedAmount > MAX_BUFFER) {
                             await this.sleep(50);
                         }
@@ -682,12 +698,28 @@ class AirShare {
     readChunk(blob) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
+            reader.onload = () => {
+                if (reader.result && reader.result.byteLength > 0) {
+                    resolve(reader.result);
+                } else {
+                    console.error('FileReader returned empty result');
+                    reject(new Error('FileReader returned empty result'));
+                }
+            };
             reader.onerror = (error) => {
                 console.error('FileReader error:', error);
-                reject(new Error('Failed to read file chunk'));
+                console.error('FileReader error details:', {
+                    error: reader.error,
+                    readyState: reader.readyState
+                });
+                reject(new Error('Failed to read file chunk: ' + (reader.error?.message || 'Unknown error')));
             };
-            reader.readAsArrayBuffer(blob);
+            try {
+                reader.readAsArrayBuffer(blob);
+            } catch (error) {
+                console.error('Error calling readAsArrayBuffer:', error);
+                reject(error);
+            }
         });
     }
 
@@ -729,15 +761,39 @@ class AirShare {
                         console.log(`File complete: ${this.currentFile.name}, chunks received: ${this.currentFileChunks.length}`);
 
                         try {
+                            // Create blob from chunks
                             const blob = new Blob(this.currentFileChunks, { type: this.currentFile.mimeType });
                             console.log(`Created blob of size: ${blob.size}, expected: ${this.currentFile.size}`);
 
-                            this.downloadFile(blob, this.currentFile.name);
-                            this.currentFile = null;
+                            // Verify blob size matches expected size
+                            if (blob.size !== this.currentFile.size) {
+                                console.warn(`Blob size mismatch! Expected: ${this.currentFile.size}, got: ${blob.size}`);
+                                // Continue anyway as some bytes might be padding
+                            }
+
+                            // Clear chunks from memory before download to reduce memory pressure
+                            const fileName = this.currentFile.name;
                             this.currentFileChunks = [];
+                            this.currentFile = null;
+
+                            // Trigger download
+                            this.downloadFile(blob, fileName);
+
+                            // Request garbage collection hint (non-standard but helps on some browsers)
+                            if (window.gc) {
+                                try {
+                                    window.gc();
+                                } catch (e) {
+                                    // Ignore - gc() is not always available
+                                }
+                            }
                         } catch (error) {
                             console.error('Error creating/downloading blob:', error);
                             this.showToast('Error saving file: ' + error.message);
+
+                            // Clean up on error
+                            this.currentFileChunks = [];
+                            this.currentFile = null;
                         }
                         break;
 
@@ -751,25 +807,35 @@ class AirShare {
                 }
             } else {
                 // Binary data chunk - ensure it's an ArrayBuffer
-                let arrayBuffer;
-
                 if (data instanceof ArrayBuffer) {
-                    arrayBuffer = data;
+                    this.currentFileChunks.push(data);
+                    this.transferStats.sentBytes += data.byteLength;
+
+                    // Update progress every 10 chunks to avoid too many UI updates
+                    if (this.currentFileChunks.length % 10 === 0) {
+                        this.updateTransferProgress();
+                    }
                 } else if (data instanceof Blob) {
+                    // Some Windows browsers might send Blob instead of ArrayBuffer
                     console.warn('Received Blob instead of ArrayBuffer, converting...');
-                    // This shouldn't happen but handle it
-                    return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        this.currentFileChunks.push(reader.result);
+                        this.transferStats.sentBytes += reader.result.byteLength;
+
+                        // Update progress
+                        if (this.currentFileChunks.length % 10 === 0) {
+                            this.updateTransferProgress();
+                        }
+                    };
+                    reader.onerror = (error) => {
+                        console.error('Error converting Blob to ArrayBuffer:', error);
+                        this.showToast('Error processing data chunk');
+                    };
+                    reader.readAsArrayBuffer(data);
                 } else {
                     console.error('Unexpected data type:', typeof data);
                     return;
-                }
-
-                this.currentFileChunks.push(arrayBuffer);
-                this.transferStats.sentBytes += arrayBuffer.byteLength;
-
-                // Update progress every 10 chunks to avoid too many UI updates
-                if (this.currentFileChunks.length % 10 === 0) {
-                    this.updateTransferProgress();
                 }
             }
         } catch (error) {
@@ -778,9 +844,50 @@ class AirShare {
         }
     }
 
-    downloadFile(blob, filename) {
-        console.log(`Downloading file: ${filename}, size: ${blob.size}`);
+    sanitizeFilename(filename) {
+        // Windows doesn't allow these characters: < > : " / \ | ? *
+        // Also trim spaces and periods from the end
+        return filename
+            .replace(/[<>:"\/\\|?*]/g, '_')
+            .replace(/\s+$/g, '')
+            .replace(/\.+$/g, '')
+            .slice(0, 255); // Windows max filename length
+    }
 
+    downloadFile(blob, filename) {
+        // Sanitize filename for Windows compatibility
+        const sanitizedFilename = this.sanitizeFilename(filename);
+        console.log(`Downloading file: ${sanitizedFilename} (original: ${filename}), size: ${blob.size}`);
+
+        // Use legacy method for all browsers for now (modern API has compatibility issues)
+        this.downloadFileLegacy(blob, sanitizedFilename);
+    }
+
+    async downloadFileModern(blob, filename) {
+        // Modern File System Access API - currently disabled due to compatibility issues
+        // Re-enable this when broader browser support is confirmed
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName: filename,
+                types: [{
+                    description: 'File',
+                    accept: { '*/*': ['.bin'] }
+                }]
+            });
+
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            console.log('File saved successfully using modern API');
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                console.warn('Modern download failed, falling back to legacy method:', error);
+                this.downloadFileLegacy(blob, filename);
+            }
+        }
+    }
+
+    downloadFileLegacy(blob, filename) {
         try {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -789,18 +896,32 @@ class AirShare {
             a.style.display = 'none';
             document.body.appendChild(a);
 
-            // Small delay for Windows browsers
+            // Longer delay for Windows browsers to ensure blob is ready
             setTimeout(() => {
-                a.click();
-                console.log('Download triggered for:', filename);
+                try {
+                    a.click();
+                    console.log('Download triggered for:', filename);
+                } catch (clickError) {
+                    console.error('Click failed, trying dispatchEvent:', clickError);
+                    // Fallback: use dispatchEvent
+                    a.dispatchEvent(new MouseEvent('click', {
+                        view: window,
+                        bubbles: true,
+                        cancelable: true
+                    }));
+                }
 
-                // Cleanup after a delay to ensure download starts
+                // Longer cleanup delay for Windows to ensure download starts
                 setTimeout(() => {
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                    console.log('Cleanup complete for:', filename);
-                }, 100);
-            }, 10);
+                    try {
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                        console.log('Cleanup complete for:', filename);
+                    } catch (cleanupError) {
+                        console.error('Error during cleanup:', cleanupError);
+                    }
+                }, 250); // Increased from 100ms
+            }, 50); // Increased from 10ms
         } catch (error) {
             console.error('Error triggering download:', error);
             this.showToast('Failed to download file: ' + error.message);
