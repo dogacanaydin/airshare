@@ -291,7 +291,7 @@ class AirShare {
         });
     }
 
-    handleFiles(files) {
+    async handleFiles(files) {
         if (!this.selectedDevice) {
             this.showToast('Please select a device first');
             return;
@@ -299,17 +299,73 @@ class AirShare {
 
         if (files.length === 0) return;
 
-        this.pendingFiles = files;
-
         // Show loading indicator
         const fileCount = files.length;
         const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-        const message = fileCount === 1
-            ? `Processing ${files[0].name}...`
-            : `Processing ${fileCount} files (${this.formatSize(totalSize)})...`;
-        this.showFileLoading(message);
+
+        if (fileCount > 1) {
+            // Multiple files - zip them
+            const message = `Processing ${fileCount} files (${this.formatSize(totalSize)})...`;
+            this.showFileLoading(message);
+            document.getElementById('loadingTitle').textContent = 'Zipping files...';
+
+            try {
+                const zipFile = await this.createZipFile(files);
+                this.pendingFiles = [zipFile];
+            } catch (error) {
+                console.error('Error creating zip file:', error);
+                this.showToast('Failed to create zip file: ' + error.message);
+                this.hideFileLoading();
+                return;
+            }
+        } else {
+            // Single file - send as is
+            this.pendingFiles = files;
+            const message = `Processing ${files[0].name}...`;
+            this.showFileLoading(message);
+        }
 
         this.initiateTransfer();
+    }
+
+    async createZipFile(files) {
+        console.log(`Creating zip file from ${files.length} files...`);
+
+        const zip = new JSZip();
+
+        // Add all files to zip
+        for (const file of files) {
+            zip.file(file.name, file);
+        }
+
+        // Generate zip file
+        const zipBlob = await zip.generateAsync({
+            type: 'blob',
+            compression: 'DEFLATE',
+            compressionOptions: {
+                level: 6 // Balanced compression
+            }
+        }, (metadata) => {
+            // Update progress during zip creation
+            const percent = metadata.percent.toFixed(0);
+            const loadingMessage = document.getElementById('loadingMessage');
+            if (loadingMessage) {
+                loadingMessage.textContent = `${percent}% complete`;
+            }
+        });
+
+        // Create a timestamp for the zip filename
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+        const zipFileName = `airshare-${timestamp}.zip`;
+
+        // Create a File object from the Blob
+        const zipFile = new File([zipBlob], zipFileName, {
+            type: 'application/zip',
+            lastModified: Date.now()
+        });
+
+        console.log(`Zip file created: ${zipFileName} (${zipFile.size} bytes)`);
+        return zipFile;
     }
 
     async initiateTransfer() {
