@@ -300,6 +300,15 @@ class AirShare {
         if (files.length === 0) return;
 
         this.pendingFiles = files;
+
+        // Show loading indicator
+        const fileCount = files.length;
+        const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+        const message = fileCount === 1
+            ? `Processing ${files[0].name}...`
+            : `Processing ${fileCount} files (${this.formatSize(totalSize)})...`;
+        this.showFileLoading(message);
+
         this.initiateTransfer();
     }
 
@@ -351,6 +360,7 @@ class AirShare {
         } catch (error) {
             console.error('Error initiating transfer:', error);
             console.error('Error stack:', error.stack);
+            this.hideFileLoading();
             this.showToast('Failed to initiate transfer: ' + error.message);
             this.cleanupTransfer();
         }
@@ -928,7 +938,20 @@ class AirShare {
         }
     }
 
+    showFileLoading(message = 'Preparing files...') {
+        document.getElementById('dropArea').style.display = 'none';
+        document.getElementById('devicesList').style.display = 'none';
+        document.getElementById('fileLoading').style.display = 'block';
+        document.getElementById('loadingTitle').textContent = 'Preparing files...';
+        document.getElementById('loadingMessage').textContent = message;
+    }
+
+    hideFileLoading() {
+        document.getElementById('fileLoading').style.display = 'none';
+    }
+
     showTransferProgress(title, deviceName) {
+        this.hideFileLoading();
         document.getElementById('dropArea').style.display = 'none';
         document.getElementById('transferProgress').style.display = 'block';
         document.getElementById('transferTitle').textContent = title;
@@ -968,6 +991,7 @@ class AirShare {
         this.isTransferring = false;
         this.transferStats = { startTime: 0, totalBytes: 0, sentBytes: 0 };
 
+        this.hideFileLoading();
         document.getElementById('transferProgress').style.display = 'none';
         document.getElementById('fileInput').value = '';
 
