@@ -1,5 +1,6 @@
 // AirShare - WebRTC File Transfer Application
 // Auto-select single device feature
+// Version: 1.0.3 - Windows file sending fixes
 
 class AirShare {
     constructor() {
@@ -19,6 +20,7 @@ class AirShare {
             sentBytes: 0
         };
 
+        console.log('AirShare v1.0.3 loaded');
         this.init();
     }
 
