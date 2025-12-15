@@ -12,6 +12,17 @@ A self-hosted, WebRTC-based file sharing application that works like AirDrop. Sh
 - 📲 **PWA support** - Install as an app on iOS, macOS, Windows, and Android
 - 🌙 **Beautiful dark UI** - Modern, responsive design
 - 🔌 **Self-hosted** - Your data stays on your network
+- 📦 **Multiple file support** - Automatically zips multiple files for easy transfer
+- ⚡ **Smart device selection** - Auto-selects when only one device is available
+- 📊 **Transfer progress** - Real-time file loading and transfer indicators
+
+## Recent Improvements
+
+- ✨ **Automatic ZIP creation** - Multiple files are automatically zipped together for seamless transfer
+- 🔄 **Enhanced loading indicators** - Visual feedback during file preparation and zipping
+- 🎯 **Smart single-device mode** - Automatically selects the target device when only one is available
+- 🐛 **Platform fixes** - Improved reliability for Windows and iOS Safari file transfers
+- 📚 **Developer documentation** - Added comprehensive [CLAUDE.MD](CLAUDE.MD) guide for contributors
 
 ## Quick Start with Docker
 
@@ -126,10 +137,11 @@ tailscale cert airshare.your-tailnet.ts.net
 ## How It Works
 
 1. **Discovery**: When you open AirShare, it connects to the signaling server and registers your device
-2. **Selection**: Select the device you want to send files to
-3. **Transfer Request**: Drop or select files - the recipient gets a notification
-4. **Accept**: The recipient accepts the transfer
-5. **Direct Transfer**: Files transfer directly between devices via WebRTC DataChannel
+2. **Selection**: Select the device you want to send files to (or it auto-selects if there's only one)
+3. **File Preparation**: Drop or select files - multiple files are automatically zipped together
+4. **Transfer Request**: The recipient gets a notification with file details
+5. **Accept**: The recipient accepts the transfer
+6. **Direct Transfer**: Files transfer directly between devices via encrypted WebRTC DataChannel
 
 ## Network Requirements
 
@@ -191,6 +203,31 @@ networks:
 - All WebRTC data channels are encrypted by default
 - The signaling server only relays connection metadata, not file contents
 - Consider adding authentication if exposing to the internet
+
+## For Developers
+
+Want to contribute or understand how AirShare works under the hood? Check out [CLAUDE.MD](CLAUDE.MD) for:
+- Detailed architecture overview
+- File structure and key components
+- Development workflow and common tasks
+- WebRTC implementation details
+- Deployment guides and troubleshooting tips
+
+### Quick Development Setup
+
+```bash
+# Clone the repository
+git clone <your-repo-url>
+cd airshare
+
+# Install dependencies
+npm install
+
+# Start development server with auto-reload
+npm run dev
+
+# Access at http://localhost:3000
+```
 
 ## License
 
