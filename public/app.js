@@ -304,29 +304,35 @@ class AirShare {
     async initiateTransfer() {
         console.log('Initiating transfer to:', this.selectedDevice.name);
         console.log('Files to send:', this.pendingFiles.length);
+        console.log('Platform:', this.detectPlatform());
 
         try {
             // Clear any pending ICE candidates from previous connections
             this.pendingIceCandidates = [];
 
+            console.log('Creating peer connection...');
             this.createPeerConnection();
 
             // Create data channel with cross-platform compatible settings
+            console.log('Creating data channel...');
             this.dataChannel = this.peerConnection.createDataChannel('fileTransfer', {
                 ordered: true,
                 maxRetransmits: 30 // Increased for Windows and cross-platform reliability
             });
 
-            console.log('Data channel created, setting up handlers...');
+            console.log('Data channel created successfully, state:', this.dataChannel.readyState);
+            console.log('Setting up data channel handlers...');
             this.setupDataChannel();
 
             // Create and send offer
-            console.log('Creating offer...');
+            console.log('Creating WebRTC offer...');
             const offer = await this.peerConnection.createOffer();
+            console.log('Offer created, setting local description...');
             await this.peerConnection.setLocalDescription(offer);
-            console.log('Local description set, sending offer...');
+            console.log('Local description set, preparing file info...');
 
             const fileInfo = this.getFilesInfo();
+            console.log('File info:', fileInfo);
 
             this.send({
                 type: 'offer',
@@ -342,7 +348,9 @@ class AirShare {
             this.showToast('Sending transfer request...');
         } catch (error) {
             console.error('Error initiating transfer:', error);
+            console.error('Error stack:', error.stack);
             this.showToast('Failed to initiate transfer: ' + error.message);
+            this.cleanupTransfer();
         }
     }
 
@@ -653,11 +661,6 @@ class AirShare {
                         if (chunkCount % 10 === 0) {
                             this.updateTransferProgress();
                         }
-
-                        // Small delay every 100 chunks to help Windows receivers process data
-                        if (chunkCount % 100 === 0) {
-                            await this.sleep(10);
-                        }
                     } catch (error) {
                         console.error('Error reading/sending chunk:', error);
                         throw error;
@@ -691,12 +694,28 @@ class AirShare {
     readChunk(blob) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
+            reader.onload = () => {
+                if (reader.result && reader.result.byteLength > 0) {
+                    resolve(reader.result);
+                } else {
+                    console.error('FileReader returned empty result');
+                    reject(new Error('FileReader returned empty result'));
+                }
+            };
             reader.onerror = (error) => {
                 console.error('FileReader error:', error);
-                reject(new Error('Failed to read file chunk'));
+                console.error('FileReader error details:', {
+                    error: reader.error,
+                    readyState: reader.readyState
+                });
+                reject(new Error('Failed to read file chunk: ' + (reader.error?.message || 'Unknown error')));
             };
-            reader.readAsArrayBuffer(blob);
+            try {
+                reader.readAsArrayBuffer(blob);
+            } catch (error) {
+                console.error('Error calling readAsArrayBuffer:', error);
+                reject(error);
+            }
         });
     }
 
@@ -836,15 +855,13 @@ class AirShare {
         const sanitizedFilename = this.sanitizeFilename(filename);
         console.log(`Downloading file: ${sanitizedFilename} (original: ${filename}), size: ${blob.size}`);
 
-        // Try modern approach first
-        if (window.showSaveFilePicker) {
-            this.downloadFileModern(blob, sanitizedFilename);
-        } else {
-            this.downloadFileLegacy(blob, sanitizedFilename);
-        }
+        // Use legacy method for all browsers for now (modern API has compatibility issues)
+        this.downloadFileLegacy(blob, sanitizedFilename);
     }
 
     async downloadFileModern(blob, filename) {
+        // Modern File System Access API - currently disabled due to compatibility issues
+        // Re-enable this when broader browser support is confirmed
         try {
             const handle = await window.showSaveFilePicker({
                 suggestedName: filename,
